@@ -1,8 +1,10 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+
+const STORAGE_KEY = "lista-compras-data";
 
 const makeId = () => Math.random().toString(36).slice(2, 8);
 
-const seed = [
+const defaultSeed = () => [
   {
     id: "lacteos", label: "🥛 Lácteos y refrigerados", items: [
       { id: makeId(), label: "Huevos" },
@@ -33,14 +35,35 @@ const seed = [
   },
 ];
 
+function loadData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+
+function saveData(data) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch {}
+}
+
 export default function ShoppingList({ onNavigate }) {
-  const [sections, setSections] = useState(seed);
-  const [checked, setChecked] = useState({});
-  const [prices, setPrices] = useState({});
-  const [collapsed, setCollapsed] = useState({});
+  const initial = loadData();
+
+  const [sections, setSections] = useState(initial?.sections || defaultSeed());
+  const [checked, setChecked] = useState(initial?.checked || {});
+  const [prices, setPrices] = useState(initial?.prices || {});
+  const [collapsed, setCollapsed] = useState(initial?.collapsed || {});
   const [newItemText, setNewItemText] = useState({});
   const [addingTo, setAddingTo] = useState(null);
   const inputRef = useRef(null);
+
+  // Persistir en localStorage
+  useEffect(() => {
+    saveData({ sections, checked, prices, collapsed });
+  }, [sections, checked, prices, collapsed]);
 
   const toggleCheck = id => setChecked(p => ({ ...p, [id]: !p[id] }));
   const toggleSection = id => setCollapsed(p => ({ ...p, [id]: !p[id] }));
@@ -71,6 +94,23 @@ export default function ShoppingList({ onNavigate }) {
     ));
     setNewItemText(p => ({ ...p, [secId]: "" }));
     setAddingTo(null);
+  };
+
+  const handleReset = () => {
+    if (confirm("¿Seguro que quieres reiniciar la lista? Se perderán los cambios.")) {
+      setChecked({});
+      setPrices({});
+    }
+  };
+
+  const handleFullReset = () => {
+    if (confirm("¿Seguro que quieres restaurar la lista original? Se borrarán todos tus cambios.")) {
+      localStorage.removeItem(STORAGE_KEY);
+      setSections(defaultSeed());
+      setChecked({});
+      setPrices({});
+      setCollapsed({});
+    }
   };
 
   return (
@@ -109,10 +149,16 @@ export default function ShoppingList({ onNavigate }) {
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
         <span style={{ color: "#888", fontSize: 13 }}>{done} de {allItems.length} listos</span>
-        <button onClick={() => { setChecked({}); setPrices({}); }}
-          style={{ fontSize: 12, padding: "3px 10px", borderRadius: 8, border: "1px solid #ccc", background: "#f5f5f5", cursor: "pointer" }}>
-          Reiniciar
-        </button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={handleReset}
+            style={{ fontSize: 12, padding: "3px 10px", borderRadius: 8, border: "1px solid #ccc", background: "#f5f5f5", cursor: "pointer" }}>
+            Reiniciar
+          </button>
+          <button onClick={handleFullReset}
+            style={{ fontSize: 12, padding: "3px 10px", borderRadius: 8, border: "1px solid #ef9a9a", background: "#ffebee", color: "#c62828", cursor: "pointer" }}>
+            Restaurar
+          </button>
+        </div>
       </div>
 
       <div style={{ background: "#e0e0e0", borderRadius: 8, height: 7, marginBottom: 14 }}>
