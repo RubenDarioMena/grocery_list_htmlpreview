@@ -1,15 +1,16 @@
 import { useState, useEffect } from "react";
 
 const STORAGE_KEY = "lista-compras-data";
-const API_KEY_STORAGE = "gemini_api_key";
+const GEMINI_KEY_STORAGE = "gemini_api_key";
+const OPENCODE_KEY_STORAGE = "opencode_api_key";
 const makeId = () => Math.random().toString(36).slice(2, 8);
 
-function loadApiKey() {
-  try { return localStorage.getItem(API_KEY_STORAGE) || ""; } catch { return ""; }
+function loadKey(key) {
+  try { return localStorage.getItem(key) || ""; } catch { return ""; }
 }
 
-function saveApiKey(key) {
-  try { localStorage.setItem(API_KEY_STORAGE, key); } catch {}
+function saveKey(key, value) {
+  try { localStorage.setItem(key, value); } catch {}
 }
 
 export default function OcrView({ onNavigate }) {
@@ -17,17 +18,17 @@ export default function OcrView({ onNavigate }) {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
-  const [userApiKey, setUserApiKey] = useState(loadApiKey);
-  const [showKeyInput, setShowKeyInput] = useState(false);
-  const [useDirectApi, setUseDirectApi] = useState(false);
 
-  useEffect(() => {
-    saveApiKey(userApiKey);
-  }, [userApiKey]);
+  const [geminiKey, setGeminiKey] = useState(() => loadKey(GEMINI_KEY_STORAGE));
+  const [opencodeKey, setOpencodeKey] = useState(() => loadKey(OPENCODE_KEY_STORAGE));
+  const [showKeyInputs, setShowKeyInputs] = useState(false);
 
-  const callGeminiDirect = async (promptText) => {
+  useEffect(() => { saveKey(GEMINI_KEY_STORAGE, geminiKey); }, [geminiKey]);
+  useEffect(() => { saveKey(OPENCODE_KEY_STORAGE, opencodeKey); }, [opencodeKey]);
+
+  const callGeminiDirect = async (promptText, key) => {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${userApiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -50,49 +51,90 @@ export default function OcrView({ onNavigate }) {
     return JSON.parse(jsonMatch[0]);
   };
 
+  const callOpencodeDirect = async (promptText, key) => {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: promptText }],
+        response_format: { type: "json_object" },
+        temperature: 0.2,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Opencode error: ${err}`);
+    }
+
+    const data = await res.json();
+    const rawText = data?.choices?.[0]?.message?.content || "";
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("No se pudo parsear la respuesta de Opencode");
+    return JSON.parse(jsonMatch[0]);
+  };
+
+  const buildPrompt = (inputText) =>
+    `Organiza la siguiente lista de compras por categorías (usa emojis en los nombres de categoría). Devuélveme ÚNICAMENTE un JSON válido con esta estructura exacta sin explicaciones ni markdown:
+{"sections":[{"label":"emoji Categoría","items":["artículo 1","artículo 2"]}]}
+
+Texto a organizar:
+${inputText.trim()}`;
+
+  const validateResult = (data) => {
+    if (!data || !data.sections || !Array.isArray(data.sections)) {
+      throw new Error("Formato de respuesta inválido");
+    }
+    return data;
+  };
+
   const handleGenerate = async () => {
     if (!text.trim()) return;
     setIsLoading(true);
     setError("");
     setResult(null);
 
+    const prompt = buildPrompt(text);
+
     try {
-      let data = null;
+      // PRIORIDAD 1: Gemini localStorage
+      if (geminiKey.trim()) {
+        const data = await callGeminiDirect(prompt, geminiKey.trim());
+        setResult(validateResult(data));
+        setIsLoading(false);
+        return;
+      }
 
-      if (useDirectApi && userApiKey) {
-        // Llamada directa a Gemini desde el frontend
-        const prompt = `Organiza la siguiente lista de compras por categorías (usa emojis en los nombres de categoría). Devuélveme ÚNICAMENTE un JSON válido con esta estructura exacta sin explicaciones ni markdown:
-{"sections":[{"label":"emoji Categoría","items":["artículo 1","artículo 2"]}]}
+      // PRIORIDAD 2: Opencode localStorage
+      if (opencodeKey.trim()) {
+        const data = await callOpencodeDirect(prompt, opencodeKey.trim());
+        setResult(validateResult(data));
+        setIsLoading(false);
+        return;
+      }
 
-Texto a organizar:
-${text.trim()}`;
-        data = await callGeminiDirect(prompt);
-      } else {
-        // Intentar backend primero
-        const res = await fetch("/api/generate-list", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
-        });
+      // PRIORIDAD 3: Backend
+      const res = await fetch("/api/generate-list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
 
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          if (res.status === 500 && errData.error === "NO_API_KEY") {
-            setShowKeyInput(true);
-            setUseDirectApi(true);
-            throw new Error("El backend no tiene API key configurada. Introduce tu propia API key de Gemini abajo.");
-          }
-          throw new Error(errData.details || errData.error || "Error del servidor");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        if (res.status === 500 && errData.error === "NO_API_KEY") {
+          setShowKeyInputs(true);
+          throw new Error("El backend no tiene API key configurada. Introduce tu propia API key de Gemini o Opencode abajo.");
         }
-
-        data = await res.json();
+        throw new Error(errData.error || errData.details || "Error del servidor");
       }
 
-      if (!data.sections || !Array.isArray(data.sections)) {
-        throw new Error("Formato de respuesta inválido");
-      }
-
-      setResult(data);
+      const data = await res.json();
+      setResult(validateResult(data));
     } catch (err) {
       setError(err.message || "Error al generar la lista. Intenta de nuevo.");
     } finally {
@@ -168,23 +210,26 @@ ${text.trim()}`;
         }}
       />
 
-      {/* API Key input (condicional) */}
-      {showKeyInput && (
-        <div style={{
-          marginTop: 12,
-          padding: "12px 14px",
-          background: "#fff8e1",
-          border: "1px solid #ffe082",
-          borderRadius: 10,
-        }}>
-          <label style={{ fontSize: 13, color: "#555", display: "block", marginBottom: 6, fontWeight: 600 }}>
-            🔑 Tu API key de Gemini (se guarda localmente)
-          </label>
+      {/* API Key inputs */}
+      <div style={{
+        marginTop: 12,
+        padding: "12px 14px",
+        background: "#fff8e1",
+        border: "1px solid #ffe082",
+        borderRadius: 10,
+        display: showKeyInputs || !geminiKey && !opencodeKey ? "block" : "none",
+      }}>
+        <label style={{ fontSize: 13, color: "#555", display: "block", marginBottom: 8, fontWeight: 600 }}>
+          🔑 API keys para testing (se guardan localmente)
+        </label>
+
+        <div style={{ marginBottom: 10 }}>
+          <label style={{ fontSize: 12, color: "#777", display: "block", marginBottom: 4 }}>Gemini (prioridad 1)</label>
           <input
             type="password"
-            value={userApiKey}
-            onChange={e => setUserApiKey(e.target.value)}
-            placeholder="Pega aquí tu API key..."
+            value={geminiKey}
+            onChange={e => setGeminiKey(e.target.value)}
+            placeholder="Pega aquí tu API key de Gemini..."
             style={{
               width: "100%",
               padding: "8px 10px",
@@ -195,17 +240,45 @@ ${text.trim()}`;
               outline: "none",
             }}
           />
-          <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-            <label style={{ fontSize: 12, color: "#777", display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={useDirectApi}
-                onChange={e => setUseDirectApi(e.target.checked)}
-              />
-              Usar mi API key directamente
-            </label>
-          </div>
         </div>
+
+        <div>
+          <label style={{ fontSize: 12, color: "#777", display: "block", marginBottom: 4 }}>Opencode (prioridad 2)</label>
+          <input
+            type="password"
+            value={opencodeKey}
+            onChange={e => setOpencodeKey(e.target.value)}
+            placeholder="Pega aquí tu API key de Opencode..."
+            style={{
+              width: "100%",
+              padding: "8px 10px",
+              borderRadius: 8,
+              border: "1px solid #ddd",
+              fontSize: 14,
+              boxSizing: "border-box",
+              outline: "none",
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Toggle key inputs */}
+      {!showKeyInputs && (geminiKey || opencodeKey) && (
+        <button
+          onClick={() => setShowKeyInputs(true)}
+          style={{
+            marginTop: 8,
+            background: "none",
+            border: "none",
+            color: "#4caf50",
+            fontSize: 12,
+            cursor: "pointer",
+            textDecoration: "underline",
+            padding: 0,
+          }}
+        >
+          {geminiKey ? "✅ Usando Gemini" : ""} {opencodeKey ? "✅ Usando Opencode" : ""} — Editar keys
+        </button>
       )}
 
       {/* Buttons */}
@@ -309,9 +382,9 @@ ${text.trim()}`;
       }}>
         <h4 style={{ margin: "0 0 8px", fontSize: 14, color: "#555" }}>💡 ¿Cómo funciona?</h4>
         <p style={{ margin: 0, fontSize: 13, color: "#777", lineHeight: 1.6 }}>
-          Esta herramienta usa <strong>Google Gemini</strong> para organizar tu texto en categorías.
-          Primero intenta usar el backend seguro. Si no está configurado, puedes introducir tu propia
-          API key de Gemini (se guarda solo en tu navegador) y se usará directamente.
+          Esta herramienta usa IA para organizar tu texto en categorías.
+          <strong> Prioridad:</strong> 1) Gemini (local), 2) Opencode (local), 3) Backend (Netlify).
+          Las API keys que introduzcas se guardan solo en tu navegador.
         </p>
       </div>
     </div>

@@ -15,11 +15,12 @@ export default async (request, context) => {
     return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers });
   }
 
-  const apiKey = Netlify.env.get("GEMINI_API_KEY");
+  const geminiKey = Netlify.env.get("GEMINI_API_KEY");
+  const opencodeKey = Netlify.env.get("OPENCODE_API_KEY");
 
-  if (!apiKey) {
+  if (!geminiKey && !opencodeKey) {
     return new Response(
-      JSON.stringify({ error: "NO_API_KEY", message: "Backend sin API key configurada" }),
+      JSON.stringify({ error: "NO_API_KEY", message: "Backend sin API key configurada (ni Gemini ni Opencode)" }),
       { status: 500, headers }
     );
   }
@@ -43,49 +44,70 @@ export default async (request, context) => {
 Texto a organizar:
 ${text.trim()}`;
 
-  try {
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
-        }),
+  // Intentar Gemini primero
+  if (geminiKey) {
+    try {
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
+          }),
+        }
+      );
+
+      if (geminiRes.ok) {
+        const geminiData = await geminiRes.json();
+        const rawText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.sections && Array.isArray(parsed.sections)) {
+            return new Response(JSON.stringify(parsed), { status: 200, headers });
+          }
+        }
       }
-    );
-
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text();
-      return new Response(JSON.stringify({ error: "Gemini error", details: errText }), { status: 502, headers });
-    }
-
-    const geminiData = await geminiRes.json();
-    const rawText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return new Response(
-        JSON.stringify({ error: "No se pudo parsear la respuesta de Gemini", raw: rawText }),
-        { status: 502, headers }
-      );
-    }
-
-    const parsed = JSON.parse(jsonMatch[0]);
-
-    if (!parsed.sections || !Array.isArray(parsed.sections)) {
-      return new Response(
-        JSON.stringify({ error: "Formato inválido de respuesta", raw: parsed }),
-        { status: 502, headers }
-      );
-    }
-
-    return new Response(JSON.stringify(parsed), { status: 200, headers });
-  } catch (err) {
-    return new Response(
-      JSON.stringify({ error: err.message || "Error interno" }),
-      { status: 500, headers }
-    );
+    } catch {}
+    // Si Gemini falla, continuamos a Opencode
   }
+
+  // Intentar Opencode (OpenAI-compatible)
+  if (opencodeKey) {
+    try {
+      const opencodeRes = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${opencodeKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [{ role: "user", content: prompt }],
+          response_format: { type: "json_object" },
+          temperature: 0.2,
+        }),
+      });
+
+      if (opencodeRes.ok) {
+        const opencodeData = await opencodeRes.json();
+        const rawText = opencodeData?.choices?.[0]?.message?.content || "";
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.sections && Array.isArray(parsed.sections)) {
+            return new Response(JSON.stringify(parsed), { status: 200, headers });
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // Si ninguna funcionó
+  return new Response(
+    JSON.stringify({ error: "No se pudo generar la lista con ninguna API disponible" }),
+    { status: 502, headers }
+  );
 };
