@@ -75,18 +75,14 @@ ${text.trim()}`;
           body: JSON.stringify({ text }),
         });
 
-        if (res.status === 500) {
+        if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
-          if (errData.error === "NO_API_KEY") {
+          if (res.status === 500 && errData.error === "NO_API_KEY") {
             setShowKeyInput(true);
             setUseDirectApi(true);
             throw new Error("El backend no tiene API key configurada. Introduce tu propia API key de Gemini abajo.");
           }
-        }
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || "Error del servidor");
+          throw new Error(errData.details || errData.error || "Error del servidor");
         }
 
         data = await res.json();
