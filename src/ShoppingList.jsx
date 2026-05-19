@@ -1,6 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 
 const STORAGE_KEY = "lista-compras-data";
+const API_KEY_STORAGE = "gemini_api_key";
+
+// [TESTING] Botón de configuración para API key temporal de Gemini - QUITAR EN PRODUCCIÓN
+function loadApiKey() {
+  try { return localStorage.getItem(API_KEY_STORAGE) || ""; } catch { return ""; }
+}
 
 const makeId = () => Math.random().toString(36).slice(2, 8);
 
@@ -58,12 +64,24 @@ export default function ShoppingList({ onNavigate }) {
   const [collapsed, setCollapsed] = useState(initial?.collapsed || {});
   const [newItemText, setNewItemText] = useState({});
   const [addingTo, setAddingTo] = useState(null);
+  const [userApiKey, setUserApiKey] = useState(loadApiKey);
   const inputRef = useRef(null);
 
   // Persistir en localStorage
   useEffect(() => {
     saveData({ sections, checked, prices, collapsed });
   }, [sections, checked, prices, collapsed]);
+
+  // [TESTING] Persistir API key temporal - QUITAR EN PRODUCCIÓN
+  useEffect(() => {
+    try { localStorage.setItem(API_KEY_STORAGE, userApiKey); } catch {}
+  }, [userApiKey]);
+
+  // [TESTING] Mostrar prompt para configurar API key - QUITAR EN PRODUCCIÓN
+  const handleConfigApiKey = () => {
+    const newKey = prompt("Introduce tu API key temporal de Gemini para testing:", userApiKey);
+    if (newKey !== null) setUserApiKey(newKey);
+  };
 
   const toggleCheck = id => setChecked(p => ({ ...p, [id]: !p[id] }));
   const toggleSection = id => setCollapsed(p => ({ ...p, [id]: !p[id] }));
@@ -115,14 +133,14 @@ export default function ShoppingList({ onNavigate }) {
 
   return (
     <div style={{ fontFamily: "sans-serif", maxWidth: 460, margin: "0 auto", padding: 16, position: "relative" }}>
-      {/* Botón OCR */}
+      {/* Botón OCR - izquierda */}
       <button
         onClick={() => onNavigate('ocr')}
         title="Escanear texto (OCR)"
         style={{
           position: "absolute",
           top: 16,
-          right: 0,
+          left: 0,
           background: "none",
           border: "1px solid #ddd",
           borderRadius: 8,
@@ -145,7 +163,34 @@ export default function ShoppingList({ onNavigate }) {
         </svg>
       </button>
 
-      <h2 style={{ margin: "0 0 4px", fontSize: 22, paddingRight: 40 }}>🛒 Lista del mandado</h2>
+      {/* [TESTING] Botón configuración - QUITAR EN PRODUCCIÓN */}
+      <button
+        onClick={handleConfigApiKey}
+        title="Configurar API key de Gemini (testing)"
+        style={{
+          position: "absolute",
+          top: 16,
+          right: 0,
+          background: "none",
+          border: "1px solid #ddd",
+          borderRadius: 8,
+          padding: "6px 8px",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          transition: "all 0.2s",
+        }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = "#2196f3"; e.currentTarget.style.background = "#f0f0f0"; }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = "#ddd"; e.currentTarget.style.background = "none"; }}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      </button>
+
+      <h2 style={{ margin: "0 0 4px", fontSize: 22 }}>🛒 Lista del mandado</h2>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
         <span style={{ color: "#888", fontSize: 13 }}>{done} de {allItems.length} listos</span>
