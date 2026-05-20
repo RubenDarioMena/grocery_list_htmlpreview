@@ -84,7 +84,7 @@ ${text.trim()}`;
           "Authorization": `Bearer ${opencodeKey}`,
         },
         body: JSON.stringify({
-          model: "gpt-4o-mini",
+          model: "minimax-m2.5-free",
           messages: [{ role: "user", content: prompt }],
           response_format: { type: "json_object" },
           temperature: 0.2,
